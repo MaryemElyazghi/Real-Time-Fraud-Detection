@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Transaction",
+  "description": "Schéma d'une transaction financière pour le système de détection de fraude",
+  "type": "object",
+  "required": [
+    "transactionId",
+    "customerId",
+    "merchantId",
+    "amount",
+    "currency",
+    "transactionType",
+    "channel",
+    "location",
+    "timestamp",
+    "cardType",
+    "isInternational",
+    "merchantCategory",
+    "previousBalance"
+  ],
+  "properties": {
+    "transactionId": {
+      "type": "string",
+      "description": "Identifiant unique de la transaction",
+      "pattern": "^TX[0-9]+-[0-9]+$"
+    },
+    "customerId": {
+      "type": "string",
+      "description": "Identifiant du client",
+      "pattern": "^CUST[0-9]+$"
+    },
+    "merchantId": {
+      "type": "string",
+      "description": "Identifiant du marchand",
+      "pattern": "^MERCH[0-9]+$"
+    },
+    "amount": {
+      "type": "number",
+      "description": "Montant de la transaction",
+      "minimum": 0
+    },
+    "currency": {
+      "type": "string",
+      "description": "Code devise ISO 4217",
+      "enum": ["EUR", "USD", "GBP", "CHF", "JPY"]
+    },
+    "transactionType": {
+      "type": "string",
+      "description": "Type de transaction",
+      "enum": ["PURCHASE", "WITHDRAWAL", "TRANSFER", "REFUND"]
+    },
+    "channel": {
+      "type": "string",
+      "description": "Canal de la transaction",
+      "enum": ["ONLINE", "POS", "ATM", "MOBILE"]
+    },
+    "location": {
+      "type": "string",
+      "description": "Localisation géographique"
+    },
+    "deviceId": {
+      "type": ["string", "null"],
+      "description": "Identifiant de l'appareil"
+    },
+    "ipAddress": {
+      "type": ["string", "null"],
+      "description": "Adresse IP",
+      "format": "ipv4"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Timestamp Unix en millisecondes"
+    },
+    "cardType": {
+      "type": "string",
+      "description": "Type de carte",
+      "enum": ["CREDIT", "DEBIT"]
+    },
+    "isInternational": {
+      "type": "boolean",
+      "description": "Transaction internationale"
+    },
+    "merchantCategory": {
+      "type": "string",
+      "description": "Catégorie du marchand (MCC)"
+    },
+    "previousBalance": {
+      "type": "number",
+      "description": "Solde avant transaction",
+      "minimum": 0
+    },
+    "isFraud": {
+      "type": ["boolean", "null"],
+      "description": "Label de fraude pour entraînement"
+    }
+  }
+}
