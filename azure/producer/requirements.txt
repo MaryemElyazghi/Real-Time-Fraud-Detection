@@ -1,0 +1,11 @@
+# Azure Event Hubs Producer Dependencies
+
+# Azure Event Hubs SDK
+azure-eventhub>=5.11.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# For data processing (optional)
+pandas>=2.0.0
+pyarrow>=14.0.0
