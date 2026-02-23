@@ -1,0 +1,384 @@
+version: '3.8'
+
+# =============================================================================
+# Real-Time Fraud Detection - Docker Compose
+# =============================================================================
+# Architecture: Kafka → Spark Streaming → HDFS → Impala
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # ZOOKEEPER - Coordination Service
+  # ===========================================================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    hostname: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - fraud-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # KAFKA - Message Broker
+  # ===========================================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    hostname: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - fraud-network
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ===========================================================================
+  # KAFKA UI - Web Interface for Kafka
+  # ===========================================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: fraud-detection-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - fraud-network
+
+  # ===========================================================================
+  # HDFS - Namenode
+  # ===========================================================================
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    hostname: namenode
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    environment:
+      - CLUSTER_NAME=fraud-detection
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - CORE_CONF_hadoop_http_staticuser_user=root
+      - HDFS_CONF_dfs_webhdfs_enabled=true
+      - HDFS_CONF_dfs_permissions_enabled=false
+      - HDFS_CONF_dfs_namenode_datanode_registration_ip___hostname___check=false
+    volumes:
+      - namenode-data:/hadoop/dfs/name
+    networks:
+      - fraud-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ===========================================================================
+  # HDFS - Datanode
+  # ===========================================================================
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    hostname: datanode
+    depends_on:
+      namenode:
+        condition: service_healthy
+    ports:
+      - "9864:9864"
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - HDFS_CONF_dfs_datanode_data_dir=/hadoop/dfs/data
+      - HDFS_CONF_dfs_webhdfs_enabled=true
+    volumes:
+      - datanode-data:/hadoop/dfs/data
+    networks:
+      - fraud-network
+
+  # ===========================================================================
+  # SPARK MASTER
+  # ===========================================================================
+  spark-master:
+    image: bitnami/spark:3.4.1
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+      - "4040:4040"
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./spark-data:/opt/spark-data
+      - spark-logs:/opt/bitnami/spark/logs
+    networks:
+      - fraud-network
+
+  # ===========================================================================
+  # SPARK WORKERS
+  # ===========================================================================
+  spark-worker-1:
+    image: bitnami/spark:3.4.1
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    depends_on:
+      - spark-master
+    ports:
+      - "8082:8081"
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./spark-data:/opt/spark-data
+    networks:
+      - fraud-network
+
+  spark-worker-2:
+    image: bitnami/spark:3.4.1
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    depends_on:
+      - spark-master
+    ports:
+      - "8083:8081"
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./spark-data:/opt/spark-data
+    networks:
+      - fraud-network
+
+  # ===========================================================================
+  # HIVE METASTORE (for Impala)
+  # ===========================================================================
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    hostname: hive-metastore
+    depends_on:
+      - namenode
+      - datanode
+      - postgres-metastore
+    ports:
+      - "9083:9083"
+    environment:
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionURL=jdbc:postgresql://postgres-metastore:5432/metastore
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionDriverName=org.postgresql.Driver
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionUserName=hive
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionPassword=hive
+      - HIVE_SITE_CONF_datanucleus_autoCreateSchema=false
+      - HIVE_SITE_CONF_hive_metastore_uris=thrift://hive-metastore:9083
+    volumes:
+      - hive-data:/user/hive/warehouse
+    networks:
+      - fraud-network
+
+  # ===========================================================================
+  # POSTGRES (Hive Metastore Backend)
+  # ===========================================================================
+  postgres-metastore:
+    image: postgres:13
+    container_name: postgres-metastore
+    hostname: postgres-metastore
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - fraud-network
+
+  # ===========================================================================
+  # AIRFLOW
+  # ===========================================================================
+  airflow-webserver:
+    image: apache/airflow:2.7.1
+    container_name: airflow-webserver
+    hostname: airflow-webserver
+    depends_on:
+      - airflow-init
+      - postgres-airflow
+    ports:
+      - "8090:8080"
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=FB0o_zt4e3Ziq3LdUUO7F2Z95cvFFx16hU8jTeR1ASM=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__SECRET_KEY=fraud-detection-secret-key
+      - _AIRFLOW_DB_MIGRATE=true
+      - _AIRFLOW_WWW_USER_CREATE=true
+      - _AIRFLOW_WWW_USER_USERNAME=admin
+      - _AIRFLOW_WWW_USER_PASSWORD=admin
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - airflow-logs:/opt/airflow/logs
+    command: webserver
+    networks:
+      - fraud-network
+
+  airflow-scheduler:
+    image: apache/airflow:2.7.1
+    container_name: airflow-scheduler
+    hostname: airflow-scheduler
+    depends_on:
+      - airflow-webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=FB0o_zt4e3Ziq3LdUUO7F2Z95cvFFx16hU8jTeR1ASM=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - airflow-logs:/opt/airflow/logs
+    command: scheduler
+    networks:
+      - fraud-network
+
+  airflow-init:
+    image: apache/airflow:2.7.1
+    container_name: airflow-init
+    depends_on:
+      - postgres-airflow
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=FB0o_zt4e3Ziq3LdUUO7F2Z95cvFFx16hU8jTeR1ASM=
+    command: db init
+    networks:
+      - fraud-network
+
+  postgres-airflow:
+    image: postgres:13
+    container_name: postgres-airflow
+    hostname: postgres-airflow
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-airflow-data:/var/lib/postgresql/data
+    networks:
+      - fraud-network
+
+  # ===========================================================================
+  # MONITORING - Prometheus & Grafana
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    hostname: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - fraud-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    hostname: grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - fraud-network
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  fraud-network:
+    driver: bridge
+    name: fraud-detection-network
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  zookeeper-data:
+  zookeeper-logs:
+  kafka-data:
+  namenode-data:
+  datanode-data:
+  hive-data:
+  postgres-data:
+  postgres-airflow-data:
+  spark-logs:
+  airflow-logs:
+  prometheus-data:
+  grafana-data:

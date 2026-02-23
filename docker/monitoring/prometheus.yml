@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Kafka metrics
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka:9092']
+
+  # Spark metrics
+  - job_name: 'spark-master'
+    static_configs:
+      - targets: ['spark-master:8080']
+
+  - job_name: 'spark-workers'
+    static_configs:
+      - targets: ['spark-worker-1:8081', 'spark-worker-2:8081']
+
+  # HDFS metrics
+  - job_name: 'hdfs-namenode'
+    static_configs:
+      - targets: ['namenode:9870']
+
+  # Airflow metrics
+  - job_name: 'airflow'
+    static_configs:
+      - targets: ['airflow-webserver:8080']
